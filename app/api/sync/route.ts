@@ -13,7 +13,7 @@ import { syncLeverCompany } from "@/collectors/lever";
  * internet can't spam your OpenAI/DB usage by hitting it directly.
  */
 const TRACKED_GREENHOUSE: { name: string; boardToken: string }[] = [
-  // { name: "Figma", boardToken: "figma" },
+  { name: "WeightWatchers", boardToken: "ww" },
 ];
 
 const TRACKED_LEVER: { name: string; slug: string }[] = [
