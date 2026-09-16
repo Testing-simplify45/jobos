@@ -1,0 +1,11 @@
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth-options";
+
+/**
+ * Real session-backed user id. Use this in every API route and server
+ * component that needs to know who's logged in.
+ */
+export async function getCurrentUserId(): Promise<string | null> {
+  const session = await getServerSession(authOptions);
+  return (session?.user as any)?.id ?? null;
+}

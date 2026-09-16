@@ -1,0 +1,261 @@
+// JobOS — Prisma schema
+// Run: npx prisma migrate dev --name init
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------- USER / PROFILE ----------
+
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  name          String?
+  passwordHash  String
+  createdAt     DateTime      @default(now())
+  profile       Profile?
+  resumes       Resume[]
+  coverLetters  CoverLetter[]
+  savedJobs     SavedJob[]
+  applications  Application[]
+}
+
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+  phone       String?
+  location    String?
+  linkedin    String?
+  portfolio   String?
+  github      String?
+  updatedAt   DateTime @updatedAt
+
+  education   Education[]
+  experiences Experience[]
+  skills      ProfileSkill[]
+  achievements Achievement[]
+}
+
+model Education {
+  id        String   @id @default(cuid())
+  profileId String
+  profile   Profile  @relation(fields: [profileId], references: [id])
+  degree    String
+  school    String
+  startDate DateTime?
+  endDate   DateTime?
+  gpa       String?
+}
+
+model Experience {
+  id          String   @id @default(cuid())
+  profileId   String
+  profile     Profile  @relation(fields: [profileId], references: [id])
+  company     String
+  role        String
+  startDate   DateTime?
+  endDate     DateTime?   // null = current
+  description String?
+  skills      String[]    // denormalized tags for fast matching
+  achievements Achievement[]
+}
+
+// Evidence-based achievement: Problem -> Action -> Result -> Skills
+// This is what the AI is allowed to cite when generating cover letters / answers.
+model Achievement {
+  id           String      @id @default(cuid())
+  profileId    String
+  profile      Profile     @relation(fields: [profileId], references: [id])
+  experienceId String?
+  experience   Experience? @relation(fields: [experienceId], references: [id])
+  problem      String
+  action       String
+  result       String
+  skills       String[]
+}
+
+model ProfileSkill {
+  id        String   @id @default(cuid())
+  profileId String
+  profile   Profile  @relation(fields: [profileId], references: [id])
+  name      String
+  level     SkillLevel @default(WORKING)
+
+  @@unique([profileId, name])
+}
+
+enum SkillLevel {
+  BASIC
+  WORKING
+  STRONG
+  EXPERT
+}
+
+model Resume {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  label     String   // e.g. "Operations Resume", "Automation Resume"
+  fileUrl   String?
+  content   String?  // structured/plain text version used for AI matching
+  createdAt DateTime @default(now())
+
+  applications Application[]
+}
+
+model CoverLetter {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  label     String   // "Master Cover Letter"
+  content   String
+  isMaster  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  applications Application[]
+}
+
+// ---------- JOBS ----------
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  website   String?
+  atsType   AtsType?
+  atsSlug   String?  // e.g. greenhouse board token, lever slug
+  jobs      Job[]
+}
+
+enum AtsType {
+  GREENHOUSE
+  LEVER
+  ASHBY
+  WORKABLE
+  SMARTRECRUITERS
+  RECRUITEE
+  PERSONIO
+  WORKDAY
+  MANUAL // pasted-in / LinkedIn-by-URL / custom career page
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  title          String
+  normalizedTitle String   // lowercased, stripped for dedup matching
+  location       String?
+  remote         Boolean   @default(false)
+  salaryMin      Int?
+  salaryMax      Int?
+  currency       String?
+  description    String
+  requirements   String[]  // extracted by AI Job Parser
+  skills         String[]  // extracted by AI Job Parser
+  keywords       String[]
+  source         String    // "greenhouse" | "lever" | "linkedin-url" | "manual" ...
+  sourceUrl      String
+  externalId     String?   // ATS-native job id, for de-dup + staleness checks
+  postedAt       DateTime?
+  status         JobStatus @default(OPEN)
+  canonicalHash  String    // company+normalizedTitle+location -> dedup key
+  discoveredAt   DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+
+  matches        JobMatch[]
+  savedBy        SavedJob[]
+  applications   Application[]
+  jobSources     JobSourceLink[]
+
+  @@index([canonicalHash])
+  @@index([status])
+}
+
+enum JobStatus {
+  OPEN
+  CLOSED
+  STALE       // not seen on a re-crawl, unconfirmed closed
+}
+
+// Tracks which raw sources contributed to a canonical (deduped) job,
+// e.g. "found on 4 sources" feature.
+model JobSourceLink {
+  id       String  @id @default(cuid())
+  jobId    String
+  job      Job     @relation(fields: [jobId], references: [id])
+  source   String
+  url      String
+}
+
+// ---------- MATCHING ----------
+
+model JobMatch {
+  id              String   @id @default(cuid())
+  jobId           String
+  job             Job      @relation(fields: [jobId], references: [id])
+  userId          String
+  strongMatches   String[]
+  partialMatches  String[]
+  missing         String[]
+  evidenceUsed    Json?    // achievement IDs / experience IDs cited
+  createdAt       DateTime @default(now())
+
+  @@unique([jobId, userId])
+}
+
+model SavedJob {
+  id       String @id @default(cuid())
+  jobId    String
+  job      Job    @relation(fields: [jobId], references: [id])
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  savedAt  DateTime @default(now())
+
+  @@unique([jobId, userId])
+}
+
+// ---------- APPLICATIONS ----------
+
+model Application {
+  id            String            @id @default(cuid())
+  jobId         String
+  job           Job               @relation(fields: [jobId], references: [id])
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  resumeId      String?
+  resume        Resume?           @relation(fields: [resumeId], references: [id])
+  coverLetterId String?
+  coverLetter   CoverLetter?      @relation(fields: [coverLetterId], references: [id])
+  status        ApplicationStatus @default(DISCOVERED)
+  answers       ApplicationAnswer[]
+  appliedAt     DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+enum ApplicationStatus {
+  DISCOVERED
+  SAVED
+  PREPARING
+  APPLIED
+  ASSESSMENT
+  INTERVIEW
+  OFFER
+  REJECTED
+}
+
+model ApplicationAnswer {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+  question      String
+  aiDraft       String?
+  finalAnswer   String?
+  evidenceUsed  Json?
+}
